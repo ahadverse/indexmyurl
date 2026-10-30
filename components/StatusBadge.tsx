@@ -1,19 +1,28 @@
-const statusColors: Record<string, string> = {
-  PENDING: 'bg-gray-100 text-gray-700',
-  QUEUED: 'bg-blue-100 text-blue-700',
-  WRAPPER_CREATED: 'bg-yellow-100 text-yellow-700',
-  WAITING_CRAWL: 'bg-orange-100 text-orange-700',
-  CRAWLED_NOT_INDEXED: 'bg-yellow-200 text-yellow-800',
-  INDEXED: 'bg-green-100 text-green-700',
-  RETRYING: 'bg-purple-100 text-purple-700',
-  FAILED: 'bg-red-100 text-red-700',
+import { Badge, Tone } from '@/components/ui/Badge'
+
+const STATUS: Record<string, { label: string; tone: Tone; pulse?: boolean }> = {
+  PENDING: { label: 'Pending', tone: 'neutral' },
+  QUEUED: { label: 'Queued', tone: 'info', pulse: true },
+  WRAPPER_CREATED: { label: 'Preparing', tone: 'info', pulse: true },
+  WAITING_CRAWL: { label: 'Waiting for Google', tone: 'warning', pulse: true },
+  CRAWLED_NOT_INDEXED: { label: 'Crawled, not indexed', tone: 'warning' },
+  RETRYING: { label: 'Retrying', tone: 'brand', pulse: true },
+  INDEXED: { label: 'Indexed', tone: 'success' },
+  FAILED: { label: 'Failed', tone: 'danger' },
+}
+
+/** Job statuses that will still change on their own. */
+export const ACTIVE_STATUSES = ['PENDING', 'QUEUED', 'WRAPPER_CREATED', 'WAITING_CRAWL', 'CRAWLED_NOT_INDEXED', 'RETRYING']
+
+export function statusLabel(status: string): string {
+  return STATUS[status]?.label ?? status
 }
 
 export default function StatusBadge({ status }: { status: string }) {
-  const cls = statusColors[status] || 'bg-gray-100 text-gray-700'
+  const s = STATUS[status] ?? { label: status, tone: 'neutral' as Tone }
   return (
-    <span className={`px-2 py-1 rounded text-xs font-semibold ${cls}`}>
-      {status}
-    </span>
+    <Badge tone={s.tone} dot pulse={s.pulse}>
+      {s.label}
+    </Badge>
   )
 }

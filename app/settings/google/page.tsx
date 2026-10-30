@@ -1,57 +1,61 @@
 "use client";
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { Check, Globe, Plug, Plus, RefreshCw, Unplug } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import Navbar from "@/components/Navbar";
+import { initials } from "@/lib/format";
+import type { GoogleAccount } from "@/lib/types";
+import { useCurrentUser } from "@/lib/hooks";
+import AppShell from "@/components/AppShell";
+import { GoogleLogo } from "@/components/GoogleButton";
+import GoogleAccessNotice, { PublishCredentialMode } from "@/components/GoogleAccessNotice";
+import { Alert } from "@/components/ui/Alert";
+import { Avatar } from "@/components/ui/Avatar";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { buttonClass } from "@/components/ui/buttonStyles";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { useConfirm } from "@/components/ui/Confirm";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
-interface GoogleAccount {
-  id: string;
-  googleEmail: string;
-  googleAccountId: string;
-  gscProperties: string[];
-  isActive: boolean;
-  propertiesCount: number;
-}
+type SyncState = "idle" | "syncing" | "done";
 
 function GoogleSettingsContent() {
-  const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const justConnected = searchParams.get("connected") === "true";
+  const { user } = useCurrentUser();
 
   const [accounts, setAccounts] = useState<GoogleAccount[]>([]);
-  const [hasGoogleConnected, setHasGoogleConnected] = useState(false);
+  const [publishMode, setPublishMode] = useState<PublishCredentialMode>();
   const [loading, setLoading] = useState(true);
-  const [syncStates, setSyncStates] = useState<
-    Record<string, "idle" | "syncing" | "done" | "error">
-  >({});
-  const [disconnectStates, setDisconnectStates] = useState<
-    Record<string, boolean>
-  >({});
-  const [errorMsg, setErrorMsg] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [syncStates, setSyncStates] = useState<Record<string, SyncState>>({});
+  const [disconnecting, setDisconnecting] = useState<Record<string, boolean>>({});
+  const [connecting, setConnecting] = useState(false);
 
   const fetchAccounts = useCallback(async () => {
     try {
       const data = await apiFetch("/api/oauth/google/accounts");
-      setHasGoogleConnected(data.hasGoogleConnected);
+      setPublishMode(data.publishCredentialMode);
       setAccounts(data.accounts || []);
+      setLoadError("");
     } catch (err: unknown) {
-      setErrorMsg(
-        err instanceof Error ? err.message : "Failed to load accounts",
-      );
+      setLoadError(err instanceof Error ? err.message : "Failed to load accounts");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
+    if (!localStorage.getItem("token")) return;
     fetchAccounts();
-  }, [router, fetchAccounts]);
+  }, [fetchAccounts]);
 
   async function handleSync(accountId: string) {
     setSyncStates((prev) => ({ ...prev, [accountId]: "syncing" }));
@@ -59,225 +63,197 @@ function GoogleSettingsContent() {
       await apiFetch("/api/oauth/google/sync", { method: "POST" });
       await fetchAccounts();
       setSyncStates((prev) => ({ ...prev, [accountId]: "done" }));
-      setTimeout(
-        () => setSyncStates((prev) => ({ ...prev, [accountId]: "idle" })),
-        2500,
-      );
-    } catch {
-      setSyncStates((prev) => ({ ...prev, [accountId]: "error" }));
-    }
-  }
-
-  async function handleDisconnect(googleAccountId: string) {
-    if (
-      !confirm(
-        "Disconnect this Google account? Indexing jobs using it may stop working.",
-      )
-    )
-      return;
-    setDisconnectStates((prev) => ({ ...prev, [googleAccountId]: true }));
-    try {
-      await apiFetch(`/api/oauth/google/${googleAccountId}`, {
-        method: "DELETE",
-      });
-      await fetchAccounts();
+      setTimeout(() => setSyncStates((prev) => ({ ...prev, [accountId]: "idle" })), 2500);
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Disconnect failed");
-    } finally {
-      setDisconnectStates((prev) => ({ ...prev, [googleAccountId]: false }));
+      setSyncStates((prev) => ({ ...prev, [accountId]: "idle" }));
+      toast({ tone: "error", title: "Sync failed", description: err instanceof Error ? err.message : undefined });
     }
   }
 
-  async function handleConnectAnother() {
+  async function handleDisconnect(account: GoogleAccount) {
+    const ok = await confirm({
+      title: "Disconnect this Google account?",
+      description: `${account.googleEmail} will be removed. Indexing jobs that rely on it may stop working until you connect an account again.`,
+      confirmLabel: "Disconnect",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setDisconnecting((prev) => ({ ...prev, [account.googleAccountId]: true }));
+    try {
+      await apiFetch(`/api/oauth/google/${account.googleAccountId}`, { method: "DELETE" });
+      await fetchAccounts();
+      toast({ tone: "success", title: "Google account disconnected" });
+    } catch (err: unknown) {
+      toast({ tone: "error", title: "Couldn't disconnect", description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setDisconnecting((prev) => ({ ...prev, [account.googleAccountId]: false }));
+    }
+  }
+
+  async function handleConnect() {
+    setConnecting(true);
     try {
       const data = await apiFetch("/api/oauth/google/connect-url");
       window.location.href = data.url;
     } catch (err: unknown) {
-      setErrorMsg(
-        err instanceof Error ? err.message : "Failed to get connect URL",
-      );
+      setConnecting(false);
+      toast({ tone: "error", title: "Couldn't start Google sign-in", description: err instanceof Error ? err.message : undefined });
     }
   }
 
   return (
-    <div className='min-h-screen bg-gray-50'>
-      <Navbar />
+    <AppShell user={user} narrow>
+      <PageHeader
+        breadcrumbs={[{ label: "Dashboard", href: "/dashboard" }, { label: "Google accounts" }]}
+        title="Google accounts"
+        description="The Google accounts IndexMeNow reads Search Console data from, to check whether your pages are indexed."
+        actions={
+          accounts.length > 0 ? (
+            <Button onClick={handleConnect} loading={connecting} leftIcon={<Plus className="h-4 w-4" />}>
+              Connect account
+            </Button>
+          ) : undefined
+        }
+      />
 
-      <div className='max-w-2xl mx-auto px-4 py-8 space-y-5'>
-        {/* Breadcrumb */}
-        <div className='text-sm text-gray-500 flex items-center gap-2'>
-          <Link href='/dashboard' className='hover:text-gray-800'>
-            Dashboard
-          </Link>
-          <span>/</span>
-          <span className='text-gray-800'>Google Settings</span>
-        </div>
-
-        {/* Success banner */}
+      <div className="space-y-6">
         {justConnected && (
-          <div className='bg-green-50 border border-green-200 rounded-lg px-5 py-4 flex items-center gap-3'>
-            <span className='text-2xl'>✅</span>
-            <div>
-              <p className='font-semibold text-green-800'>
-                Google Account Connected Successfully!
-              </p>
-              <p className='text-sm text-green-700 mt-0.5'>
-                Your GSC properties are listed below. You can sync them anytime.
-              </p>
-            </div>
-          </div>
+          <Alert tone="success" title="Google account connected">
+            Your Search Console properties are listed below. You can sync them again at any time.
+          </Alert>
         )}
+        {loadError && <Alert tone="error">{loadError}</Alert>}
 
-        {/* Error */}
-        {errorMsg && (
-          <div className='bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm'>
-            {errorMsg}
-          </div>
-        )}
+        <GoogleAccessNotice mode={publishMode} />
 
-        {/* Accounts */}
-        <div className='bg-white rounded-lg border border-gray-200 overflow-hidden'>
-          <div className='px-6 py-4 border-b border-gray-100 flex items-center justify-between'>
-            <h2 className='font-semibold text-base'>
-              Connected Google Accounts
-            </h2>
-            <button
-              onClick={handleConnectAnother}
-              className='text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-medium'
-            >
-              + Connect Account
-            </button>
-          </div>
+        <Card>
+          <CardHeader
+            icon={<Plug className="h-[18px] w-[18px]" />}
+            title="Connected accounts"
+            description={loading ? "Loading…" : `${accounts.length} connected`}
+          />
 
           {loading ? (
-            <div className='px-6 py-10 text-center text-sm text-gray-400'>
-              Loading...
-            </div>
-          ) : !hasGoogleConnected || accounts.length === 0 ? (
-            <div className='px-6 py-10 text-center'>
-              <p className='text-gray-500 text-sm mb-4'>
-                No Google accounts connected yet.
-              </p>
-              <button
-                onClick={handleConnectAnother}
-                className='bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded text-sm font-medium'
-              >
-                Connect Google Account
-              </button>
-            </div>
-          ) : (
-            <ul className='divide-y divide-gray-100'>
-              {accounts.map((acc) => (
-                <li key={acc.id} className='px-6 py-5'>
-                  {/* Account header */}
-                  <div className='flex items-start justify-between gap-4'>
-                    <div className='flex items-center gap-3'>
-                      <div className='w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-sm uppercase'>
-                        {acc.googleEmail?.[0] ?? "G"}
-                      </div>
-                      <div>
-                        <p className='font-medium text-sm'>{acc.googleEmail}</p>
-                        <div className='flex items-center gap-2 mt-0.5'>
-                          {acc.isActive && (
-                            <span className='text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full'>
-                              Active
-                            </span>
-                          )}
-                          <span className='text-xs text-gray-400'>
-                            {acc.propertiesCount ??
-                              acc.gscProperties?.length ??
-                              0}{" "}
-                            properties
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Action buttons */}
-                    <div className='flex items-center gap-2 shrink-0'>
-                      <button
-                        onClick={() => handleSync(acc.id)}
-                        disabled={syncStates[acc.id] === "syncing"}
-                        className='text-sm border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded disabled:opacity-50 flex items-center gap-1.5'
-                      >
-                        {syncStates[acc.id] === "syncing" ? (
-                          <>
-                            <span className='animate-spin'>↻</span> Syncing...
-                          </>
-                        ) : syncStates[acc.id] === "done" ? (
-                          <>✓ Synced</>
-                        ) : (
-                          <>↻ Sync Properties</>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleDisconnect(acc.googleAccountId)}
-                        disabled={disconnectStates[acc.googleAccountId]}
-                        className='text-sm border border-red-200 text-red-600 hover:bg-red-50 px-3 py-1.5 rounded disabled:opacity-50'
-                      >
-                        {disconnectStates[acc.googleAccountId]
-                          ? "Disconnecting..."
-                          : "Disconnect"}
-                      </button>
+            <div className="space-y-6 p-6" aria-hidden="true">
+              {[0, 1].map((i) => (
+                <div key={i} className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-9 w-9 rounded-full" />
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-48" />
+                      <Skeleton className="h-3 w-24" />
                     </div>
                   </div>
-
-                  {/* GSC Properties */}
-                  <div className='mt-4'>
-                    <p className='text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide'>
-                      GSC Properties
-                    </p>
-                    {acc.gscProperties && acc.gscProperties.length > 0 ? (
-                      <div className='space-y-1'>
-                        {acc.gscProperties.map((prop) => (
-                          <div
-                            key={prop}
-                            className='flex items-center gap-2 text-sm bg-gray-50 border border-gray-200 rounded px-3 py-1.5'
-                          >
-                            <span className='w-2 h-2 rounded-full bg-green-400 shrink-0' />
-                            <span className='font-mono text-xs text-gray-700 break-all'>
-                              {prop}
+                  <Skeleton className="h-9 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : accounts.length === 0 ? (
+            <EmptyState
+              icon={<GoogleLogo className="h-6 w-6" />}
+              title="No Google account connected"
+              description="Connect an account that owns your sites in Search Console so indexing can be verified."
+              action={
+                <Button onClick={handleConnect} loading={connecting} leftIcon={<Plug className="h-4 w-4" />}>
+                  Connect Google account
+                </Button>
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {accounts.map((acc) => {
+                const count = acc.propertiesCount ?? acc.gscProperties?.length ?? 0;
+                const sync = syncStates[acc.id] ?? "idle";
+                return (
+                  <li key={acc.id} className="px-5 py-5 sm:px-6">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar label={initials(acc.googleEmail?.[0], "", "G")} seed={acc.googleEmail} />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-900">{acc.googleEmail}</p>
+                          <div className="mt-0.5 flex items-center gap-2">
+                            {acc.isActive && (
+                              <Badge tone="success" dot>
+                                Active
+                              </Badge>
+                            )}
+                            <span className="text-xs text-slate-500">
+                              {count} propert{count === 1 ? "y" : "ies"}
                             </span>
                           </div>
-                        ))}
+                        </div>
                       </div>
-                    ) : (
-                      <p className='text-sm text-gray-400 italic'>
-                        No properties found. Try syncing.
-                      </p>
-                    )}
-                  </div>
-                </li>
-              ))}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          loading={sync === "syncing"}
+                          onClick={() => handleSync(acc.id)}
+                          leftIcon={sync === "done" ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                        >
+                          {sync === "syncing" ? "Syncing…" : sync === "done" ? "Synced" : "Sync"}
+                        </Button>
+                        <Button
+                          variant="dangerSoft"
+                          size="sm"
+                          loading={disconnecting[acc.googleAccountId]}
+                          onClick={() => handleDisconnect(acc)}
+                          leftIcon={<Unplug className="h-3.5 w-3.5" />}
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Search Console properties</p>
+                      {acc.gscProperties && acc.gscProperties.length > 0 ? (
+                        <ul className="flex flex-wrap gap-2">
+                          {acc.gscProperties.map((prop) => (
+                            <li key={prop} className="flex max-w-full items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5">
+                              <Globe className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                              <span className="truncate font-mono text-xs text-slate-700">{prop}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-sm text-slate-500">No properties found. Try syncing.</p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
-        </div>
+        </Card>
 
-        {/* Go to Dashboard */}
-        <div className='flex justify-end'>
-          <Link
-            href='/dashboard'
-            className='bg-gray-900 hover:bg-gray-700 text-white px-5 py-2 rounded text-sm font-medium'
-          >
-            Go to Dashboard →
+        <div className="flex justify-end">
+          <Link href="/dashboard" className={buttonClass({ variant: "dark" })}>
+            Go to dashboard
           </Link>
         </div>
       </div>
-    </div>
+    </AppShell>
+  );
+}
+
+function SettingsFallback() {
+  return (
+    <AppShell narrow>
+      <div className="space-y-4" aria-hidden="true">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-9 w-64" />
+        <Skeleton className="h-4 w-96 max-w-full" />
+        <Skeleton className="mt-6 h-40 w-full rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-xl" />
+      </div>
+    </AppShell>
   );
 }
 
 export default function GoogleSettingsPage() {
   return (
-    <Suspense
-      fallback={
-        <div className='min-h-screen bg-gray-50'>
-          <div className='max-w-2xl mx-auto px-4 py-8 text-sm text-gray-400'>
-            Loading...
-          </div>
-        </div>
-      }
-    >
+    <Suspense fallback={<SettingsFallback />}>
       <GoogleSettingsContent />
     </Suspense>
   );

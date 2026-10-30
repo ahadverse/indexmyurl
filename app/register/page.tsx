@@ -2,12 +2,18 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Lock, Mail } from 'lucide-react'
 import { apiFetch, saveAuth } from '@/lib/api'
+import AuthShell from '@/components/AuthShell'
+import { Alert } from '@/components/ui/Alert'
+import { Button } from '@/components/ui/Button'
+import { Input, PasswordInput } from '@/components/ui/Input'
 
 export default function RegisterPage() {
   const router = useRouter()
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' })
   const [error, setError] = useState('')
+  const [passwordError, setPasswordError] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -16,12 +22,17 @@ export default function RegisterPage() {
   }, [router])
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
+    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+    if (e.target.name === 'password') setPasswordError('')
   }
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+    if (form.password.length < 8) {
+      setPasswordError('Use at least 8 characters.')
+      return
+    }
     setLoading(true)
     try {
       const data = await apiFetch('/api/auth/register', {
@@ -32,77 +43,61 @@ export default function RegisterPage() {
       router.push('/dashboard')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Registration failed')
-    } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white p-8 rounded-lg shadow border border-gray-200 w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6">Create Account</h1>
-
-        {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">{error}</div>}
-
-        <form onSubmit={handleRegister} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">First Name</label>
-              <input
-                name="firstName"
-                value={form.firstName}
-                onChange={handleChange}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Last Name</label>
-              <input
-                name="lastName"
-                value={form.lastName}
-                onChange={handleChange}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
-            <input
-              type="email"
-              name="email"
-              value={form.email}
-              onChange={handleChange}
-              required
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Password</label>
-            <input
-              type="password"
-              name="password"
-              value={form.password}
-              onChange={handleChange}
-              required
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-medium text-sm disabled:opacity-50"
-          >
-            {loading ? 'Creating account...' : 'Register'}
-          </button>
-        </form>
-
-        <p className="text-sm text-center mt-4 text-gray-600">
+    <AuthShell
+      title="Create your account"
+      subtitle="Start with 5 free credits. No card needed."
+      footer={
+        <>
           Already have an account?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">Login</Link>
-        </p>
-      </div>
-    </div>
+          <Link href="/login" className="font-medium text-brand-600 hover:text-brand-700">
+            Sign in
+          </Link>
+        </>
+      }
+    >
+      {error && <Alert tone="error" className="mb-5">{error}</Alert>}
+
+      <form onSubmit={handleRegister} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="First name" name="firstName" autoComplete="given-name" value={form.firstName} onChange={handleChange} required />
+          <Input label="Last name" name="lastName" autoComplete="family-name" value={form.lastName} onChange={handleChange} required />
+        </div>
+        <Input
+          label="Email"
+          type="email"
+          name="email"
+          autoComplete="email"
+          placeholder="you@company.com"
+          value={form.email}
+          onChange={handleChange}
+          leftIcon={<Mail className="h-4 w-4" />}
+          required
+        />
+        <PasswordInput
+          label="Password"
+          name="password"
+          autoComplete="new-password"
+          placeholder="At least 8 characters"
+          value={form.password}
+          onChange={handleChange}
+          leftIcon={<Lock className="h-4 w-4" />}
+          error={passwordError}
+          hint="Use at least 8 characters."
+          required
+        />
+        <Button type="submit" size="lg" fullWidth loading={loading} className="!mt-6">
+          {loading ? 'Creating account…' : 'Create account'}
+        </Button>
+      </form>
+
+      <p className="mt-5 text-center text-xs leading-relaxed text-slate-500">
+        Indexing is decided by Google and is never guaranteed. A credit is only used once a page is confirmed indexed.
+      </p>
+    </AuthShell>
   )
 }

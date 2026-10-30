@@ -1,203 +1,241 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { apiFetch } from '@/lib/api'
-import Navbar from '@/components/Navbar'
-
-interface User {
-  id: string
-  firstName: string
-  lastName: string
-  email: string
-  credits: number
-  availableCredits: number
-  apiKey: string
-  authProvider: string
-}
+import { useEffect, useState } from 'react'
+import { Eye, EyeOff, KeyRound, Lock, RefreshCw, TerminalSquare, UserRound, Zap } from 'lucide-react'
+import { API_BASE, apiFetch } from '@/lib/api'
+import { initials } from '@/lib/format'
+import { useCurrentUser } from '@/lib/hooks'
+import AppShell from '@/components/AppShell'
+import { Alert } from '@/components/ui/Alert'
+import { Avatar } from '@/components/ui/Avatar'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { useConfirm } from '@/components/ui/Confirm'
+import { CopyButton } from '@/components/ui/CopyButton'
+import { Input, PasswordInput } from '@/components/ui/Input'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { useToast } from '@/components/ui/Toast'
 
 export default function ProfilePage() {
-  const router = useRouter()
-  const [user, setUser] = useState<User | null>(null)
+  const toast = useToast()
+  const confirm = useConfirm()
+  const { user, setUser, loading } = useCurrentUser()
+
   const [form, setForm] = useState({ firstName: '', lastName: '' })
+  const [saving, setSaving] = useState(false)
+  const [profileError, setProfileError] = useState('')
+
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '' })
-  const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [pwMsg, setPwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [pwSaving, setPwSaving] = useState(false)
+  const [pwError, setPwError] = useState('')
+
   const [apiKey, setApiKey] = useState('')
-  const [apiKeyMsg, setApiKeyMsg] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [revealed, setRevealed] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
 
+  // fill the form once the account has loaded
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) { router.push('/login'); return }
-
-    apiFetch('/api/auth/me')
-      .then(data => {
-        setUser(data.user)
-        setForm({ firstName: data.user.firstName, lastName: data.user.lastName })
-        setApiKey(data.user.apiKey || '')
-      })
-      .catch(() => router.push('/login'))
-      .finally(() => setLoading(false))
-  }, [router])
+    if (!user) return
+    setForm((f) => (f.firstName || f.lastName ? f : { firstName: user.firstName, lastName: user.lastName }))
+    setApiKey((k) => k || user.apiKey || '')
+  }, [user])
 
   async function handleUpdateProfile(e: React.FormEvent) {
     e.preventDefault()
-    setProfileMsg(null)
+    setProfileError('')
+    setSaving(true)
     try {
-      const data = await apiFetch('/api/auth/profile', {
-        method: 'PUT',
-        body: JSON.stringify(form),
-      })
+      const data = await apiFetch('/api/auth/profile', { method: 'PUT', body: JSON.stringify(form) })
       setUser(data.user)
       localStorage.setItem('user', JSON.stringify(data.user))
-      setProfileMsg({ type: 'success', text: 'Profile updated successfully' })
-    } catch (err: unknown) {
-      setProfileMsg({ type: 'error', text: err instanceof Error ? err.message : 'Update failed' })
+      toast({ tone: 'success', title: 'Profile updated' })
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Update failed')
+    } finally {
+      setSaving(false)
     }
   }
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault()
-    setPwMsg(null)
+    setPwError('')
+    if (pwForm.newPassword.length < 8) {
+      setPwError('The new password must be at least 8 characters.')
+      return
+    }
+    setPwSaving(true)
     try {
-      await apiFetch('/api/auth/change-password', {
-        method: 'PUT',
-        body: JSON.stringify(pwForm),
-      })
-      setPwMsg({ type: 'success', text: 'Password changed successfully' })
+      await apiFetch('/api/auth/change-password', { method: 'PUT', body: JSON.stringify(pwForm) })
+      toast({ tone: 'success', title: 'Password changed' })
       setPwForm({ currentPassword: '', newPassword: '' })
-    } catch (err: unknown) {
-      setPwMsg({ type: 'error', text: err instanceof Error ? err.message : 'Password change failed' })
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : 'Password change failed')
+    } finally {
+      setPwSaving(false)
     }
   }
 
   async function handleRegenerateKey() {
-    if (!confirm('Regenerate API key? Your current key will stop working.')) return
+    const ok = await confirm({
+      title: 'Regenerate your API key?',
+      description: 'The current key stops working immediately. Anything using it will need the new key.',
+      confirmLabel: 'Regenerate key',
+      tone: 'danger',
+    })
+    if (!ok) return
+    setRegenerating(true)
     try {
       const data = await apiFetch('/api/auth/regenerate-key', { method: 'POST' })
       setApiKey(data.apiKey)
-      setApiKeyMsg('New API key generated!')
-    } catch (err: unknown) {
-      setApiKeyMsg(err instanceof Error ? err.message : 'Failed to regenerate key')
+      setRevealed(true)
+      toast({ tone: 'success', title: 'New API key generated' })
+    } catch (err) {
+      toast({ tone: 'error', title: "Couldn't regenerate the key", description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setRegenerating(false)
     }
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  const credits = user ? user.availableCredits ?? user.credits : undefined
+  const masked = apiKey ? `${apiKey.slice(0, 4)}${'•'.repeat(24)}${apiKey.slice(-4)}` : ''
+  const curl = `curl -X POST ${API_BASE}/api/urls/submit \\\n  -H "X-Api-Key: ${apiKey || 'YOUR_API_KEY'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"url": "https://example.com/page"}'`
+  const isGoogleOnly = user?.authProvider === 'google'
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar userName={user ? `${user.firstName} ${user.lastName}` : undefined} />
+    <AppShell user={user} narrow>
+      <PageHeader title="Profile" description="Your account, password and API access." />
 
-      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-
-        {/* User Info */}
-        {user && (
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="font-semibold text-lg mb-3">Account Overview</h2>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><span className="text-gray-500">Email:</span> <span className="ml-1 font-medium">{user.email}</span></div>
-              <div><span className="text-gray-500">Auth:</span> <span className="ml-1 font-medium capitalize">{user.authProvider}</span></div>
-              <div><span className="text-gray-500">Credits:</span> <span className="ml-1 font-medium text-green-600">{user.availableCredits ?? user.credits}</span></div>
-            </div>
-          </div>
-        )}
-
-        {/* Update Name */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-lg mb-4">Update Profile</h2>
-          {profileMsg && (
-            <div className={`mb-4 text-sm px-4 py-2 rounded ${profileMsg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-              {profileMsg.text}
-            </div>
-          )}
-          <form onSubmit={handleUpdateProfile} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">First Name</label>
-                <input
-                  value={form.firstName}
-                  onChange={e => setForm(prev => ({ ...prev, firstName: e.target.value }))}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+      <div className="space-y-6">
+        {/* overview */}
+        <Card>
+          <CardBody>
+            {loading && !user ? (
+              <div className="flex items-center gap-4">
+                <Skeleton className="h-14 w-14 rounded-full" />
+                <div className="space-y-2.5">
+                  <Skeleton className="h-5 w-44" />
+                  <Skeleton className="h-4 w-56" />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Last Name</label>
-                <input
-                  value={form.lastName}
-                  onChange={e => setForm(prev => ({ ...prev, lastName: e.target.value }))}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+            ) : user ? (
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <Avatar label={initials(user.firstName, user.lastName, user.email)} seed={user.email} size="lg" />
+                  <div className="min-w-0">
+                    <p className="truncate text-lg font-semibold text-slate-900">
+                      {user.firstName} {user.lastName}
+                    </p>
+                    <p className="truncate text-sm text-slate-500">{user.email}</p>
+                    <div className="mt-2">
+                      <Badge tone={isGoogleOnly ? 'info' : 'neutral'}>{isGoogleOnly ? 'Google sign-in' : 'Email & password'}</Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-brand-50 px-5 py-3 text-right">
+                  <p className="flex items-center justify-end gap-1.5 text-xs font-medium text-brand-700">
+                    <Zap className="h-3.5 w-3.5" aria-hidden="true" /> Credits
+                  </p>
+                  <p className="text-2xl font-semibold tabular-nums text-brand-900">{credits}</p>
+                </div>
               </div>
-            </div>
-            <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">
-              Save Changes
-            </button>
-          </form>
-        </div>
+            ) : null}
+          </CardBody>
+        </Card>
 
-        {/* Change Password */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-lg mb-4">Change Password</h2>
-          {pwMsg && (
-            <div className={`mb-4 text-sm px-4 py-2 rounded ${pwMsg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-              {pwMsg.text}
-            </div>
-          )}
-          <form onSubmit={handleChangePassword} className="space-y-4">
+        {/* personal info */}
+        <Card>
+          <CardHeader icon={<UserRound className="h-[18px] w-[18px]" />} title="Personal information" description="Shown in the header and on your account." />
+          <CardBody>
+            {profileError && <Alert tone="error" className="mb-4">{profileError}</Alert>}
+            <form onSubmit={handleUpdateProfile} className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Input label="First name" value={form.firstName} onChange={(e) => setForm((p) => ({ ...p, firstName: e.target.value }))} required />
+                <Input label="Last name" value={form.lastName} onChange={(e) => setForm((p) => ({ ...p, lastName: e.target.value }))} required />
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" loading={saving} disabled={!user}>
+                  Save changes
+                </Button>
+              </div>
+            </form>
+          </CardBody>
+        </Card>
+
+        {/* password */}
+        <Card>
+          <CardHeader icon={<Lock className="h-[18px] w-[18px]" />} title="Password" description="Change the password you sign in with." />
+          <CardBody>
+            {isGoogleOnly ? (
+              <Alert tone="info">You sign in with Google, so there is no password on this account to change.</Alert>
+            ) : (
+              <>
+                {pwError && <Alert tone="error" className="mb-4">{pwError}</Alert>}
+                <form onSubmit={handleChangePassword} className="space-y-4">
+                  <PasswordInput
+                    label="Current password"
+                    autoComplete="current-password"
+                    value={pwForm.currentPassword}
+                    onChange={(e) => setPwForm((p) => ({ ...p, currentPassword: e.target.value }))}
+                    required
+                  />
+                  <PasswordInput
+                    label="New password"
+                    autoComplete="new-password"
+                    hint="At least 8 characters."
+                    value={pwForm.newPassword}
+                    onChange={(e) => setPwForm((p) => ({ ...p, newPassword: e.target.value }))}
+                    required
+                  />
+                  <div className="flex justify-end">
+                    <Button type="submit" loading={pwSaving}>
+                      Change password
+                    </Button>
+                  </div>
+                </form>
+              </>
+            )}
+          </CardBody>
+        </Card>
+
+        {/* api key */}
+        <Card>
+          <CardHeader icon={<KeyRound className="h-[18px] w-[18px]" />} title="API key" description="Submit and track URLs from your own tools." />
+          <CardBody className="space-y-5">
             <div>
-              <label className="block text-sm font-medium mb-1">Current Password</label>
-              <input
-                type="password"
-                value={pwForm.currentPassword}
-                onChange={e => setPwForm(prev => ({ ...prev, currentPassword: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <p className="mb-1.5 text-sm font-medium text-slate-700">Your key</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 font-mono text-[13px] text-slate-800">
+                  {loading && !apiKey ? <Skeleton className="h-4 w-64" /> : revealed ? apiKey : masked}
+                </code>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setRevealed((r) => !r)}
+                  leftIcon={revealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                >
+                  {revealed ? 'Hide' : 'Reveal'}
+                </Button>
+                <CopyButton value={apiKey} />
+              </div>
+              <p className="mt-2 text-[13px] text-slate-500">Treat it like a password: anyone with this key can submit URLs and spend credits.</p>
             </div>
+
             <div>
-              <label className="block text-sm font-medium mb-1">New Password</label>
-              <input
-                type="password"
-                value={pwForm.newPassword}
-                onChange={e => setPwForm(prev => ({ ...prev, newPassword: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <p className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                <TerminalSquare className="h-4 w-4 text-slate-400" aria-hidden="true" /> Example
+              </p>
+              <pre className="overflow-x-auto rounded-lg bg-slate-900 px-4 py-3.5 font-mono text-[12.5px] leading-6 text-slate-100">{curl}</pre>
             </div>
-            <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">
-              Change Password
-            </button>
-          </form>
-        </div>
 
-        {/* API Key */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-lg mb-4">API Key</h2>
-          {apiKeyMsg && <div className="mb-3 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded">{apiKeyMsg}</div>}
-          <div className="flex gap-3 items-center">
-            <input
-              readOnly
-              value={apiKey}
-              className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm font-mono bg-gray-50"
-            />
-            <button
-              onClick={() => { navigator.clipboard.writeText(apiKey); setApiKeyMsg('Copied!') }}
-              className="bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded text-sm"
-            >
-              Copy
-            </button>
-          </div>
-          <button
-            onClick={handleRegenerateKey}
-            className="mt-3 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded text-sm font-medium"
-          >
-            Regenerate API Key
-          </button>
-        </div>
-
+            <div className="flex justify-end border-t border-slate-100 pt-5">
+              <Button variant="dangerSoft" size="sm" loading={regenerating} onClick={handleRegenerateKey} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
+                Regenerate key
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
       </div>
-    </div>
+    </AppShell>
   )
 }

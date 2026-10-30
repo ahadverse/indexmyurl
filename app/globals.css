@@ -1,3 +1,71 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    @apply bg-brand-100 text-brand-900;
+  }
+  /* one consistent keyboard focus ring everywhere */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-white;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply ring-0 ring-offset-0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* loading placeholder: a pale block with a light band sweeping across it */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-slate-200/70;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/70 to-transparent;
+  }
+
+  /* subtle dotted backdrop used on the landing page hero and auth panel */
+  .bg-dots {
+    background-image: radial-gradient(rgb(255 255 255 / 0.18) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .bg-dots-dark {
+    background-image: radial-gradient(rgb(15 23 42 / 0.07) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  /* moving stripes on an active progress bar */
+  .progress-stripes {
+    background-image: linear-gradient(
+      45deg,
+      rgb(255 255 255 / 0.22) 25%,
+      transparent 25%,
+      transparent 50%,
+      rgb(255 255 255 / 0.22) 50%,
+      rgb(255 255 255 / 0.22) 75%,
+      transparent 75%
+    );
+    background-size: 1.25rem 1.25rem;
+  }
+}

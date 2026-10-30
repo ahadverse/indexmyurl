@@ -1,40 +1,24 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock, Inbox, Plug, RefreshCw, Zap } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
-import Navbar from '@/components/Navbar'
-import StatusBadge from '@/components/StatusBadge'
-
-interface User {
-  id: string
-  firstName: string
-  lastName: string
-  email: string
-  credits: number
-  availableCredits: number
-  apiKey: string
-  authProvider: string
-}
-
-interface GoogleAccount {
-  id: string
-  googleEmail: string
-  googleAccountId: string
-  gscProperties: string[]
-  isActive: boolean
-  propertiesCount: number
-}
-
-interface Job {
-  _id: string
-  originalUrl: string
-  domain: string
-  status: string
-  retryCount: number
-  credentialSource: string
-  createdAt: string
-}
+import { cn } from '@/lib/cn'
+import { timeAgo, formatDateTime } from '@/lib/format'
+import { useCurrentUser } from '@/lib/hooks'
+import type { GoogleAccount, Job } from '@/lib/types'
+import AppShell from '@/components/AppShell'
+import StatusBadge, { ACTIVE_STATUSES } from '@/components/StatusBadge'
+import UrlScanner from '@/components/UrlScanner'
+import { Alert } from '@/components/ui/Alert'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { buttonClass } from '@/components/ui/buttonStyles'
+import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { Skeleton, SkeletonRows, SkeletonStat } from '@/components/ui/Skeleton'
+import { useToast } from '@/components/ui/Toast'
 
 interface Pagination {
   page: number
@@ -43,293 +27,340 @@ interface Pagination {
   totalPages: number
 }
 
-const TERMINAL_STATUSES = ['INDEXED', 'FAILED']
-const STATUS_FILTERS = ['All', 'INDEXED', 'QUEUED', 'WAITING_CRAWL', 'FAILED', 'PENDING', 'RETRYING']
+interface Stats {
+  total: number
+  indexed: number
+  failed: number
+  active: number
+}
+
+const FILTERS = [
+  { key: 'All', label: 'All' },
+  { key: 'INDEXED', label: 'Indexed' },
+  { key: 'QUEUED', label: 'Queued' },
+  { key: 'WAITING_CRAWL', label: 'Waiting' },
+  { key: 'RETRYING', label: 'Retrying' },
+  { key: 'PENDING', label: 'Pending' },
+  { key: 'FAILED', label: 'Failed' },
+]
+
+const POLL_MS = 20_000
+
+function StatCard({ label, value, hint, icon, tone }: { label: string; value: React.ReactNode; hint: string; icon: React.ReactNode; tone: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-slate-500">{label}</p>
+        <span className={cn('grid h-8 w-8 place-items-center rounded-lg', tone)}>{icon}</span>
+      </div>
+      <p className="mt-3 text-3xl font-semibold tabular-nums tracking-tight text-slate-900">{value}</p>
+      <p className="mt-1 text-[13px] text-slate-500">{hint}</p>
+    </div>
+  )
+}
 
 export default function DashboardPage() {
-  const router = useRouter()
-  const [user, setUser] = useState<User | null>(null)
-  const [googleAccounts, setGoogleAccounts] = useState<{ hasGoogleConnected: boolean; accounts: GoogleAccount[] }>({ hasGoogleConnected: false, accounts: [] })
+  const toast = useToast()
+  const { user, loading: userLoading, error: userError, refresh: refreshUser } = useCurrentUser()
+
+  const [accounts, setAccounts] = useState<GoogleAccount[] | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 1 })
-  const [urlInput, setUrlInput] = useState('')
-  const [submitMsg, setSubmitMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [statusFilter, setStatusFilter] = useState('All')
-  const [jobActionMsg, setJobActionMsg] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(true)
-  const [syncLoading, setSyncLoading] = useState(false)
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [filter, setFilter] = useState('All')
+  const [jobsLoading, setJobsLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState<Record<string, boolean>>({})
+  const [connecting, setConnecting] = useState(false)
 
-  const fetchJobs = useCallback(async (page = 1, filter = statusFilter) => {
-    const params = new URLSearchParams({ page: String(page), limit: '20' })
-    if (filter !== 'All') params.set('status', filter)
-    const data = await apiFetch(`/api/urls/jobs?${params}`)
-    setJobs(data.jobs)
-    setPagination(data.pagination)
-  }, [statusFilter])
+  const fetchJobs = useCallback(
+    async (page = 1, status = filter, quiet = false) => {
+      if (!quiet) setJobsLoading(true)
+      try {
+        const params = new URLSearchParams({ page: String(page), limit: '20' })
+        if (status !== 'All') params.set('status', status)
+        const data = await apiFetch(`/api/urls/jobs?${params}`)
+        setJobs(data.jobs)
+        setPagination(data.pagination)
+      } catch (err) {
+        if (!quiet) toast({ tone: 'error', title: "Couldn't load your jobs", description: err instanceof Error ? err.message : undefined })
+      } finally {
+        setJobsLoading(false)
+      }
+    },
+    [filter, toast]
+  )
 
-  const fetchGoogleAccounts = useCallback(async () => {
-    const data = await apiFetch('/api/oauth/google/accounts')
-    setGoogleAccounts(data)
+  const fetchStats = useCallback(async () => {
+    const count = (status?: string) =>
+      apiFetch(`/api/urls/jobs?limit=1${status ? `&status=${status}` : ''}`).then((d) => d.pagination.total as number)
+    try {
+      const [total, indexed, failed] = await Promise.all([count(), count('INDEXED'), count('FAILED')])
+      setStats({ total, indexed, failed, active: Math.max(0, total - indexed - failed) })
+    } catch {
+      /* the stat cards simply keep their previous numbers */
+    }
   }, [])
 
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) { router.push('/login'); return }
-
-    async function init() {
-      try {
-        const [userData] = await Promise.all([
-          apiFetch('/api/auth/me'),
-          fetchGoogleAccounts(),
-          fetchJobs(1),
-        ])
-        setUser(userData.user)
-      } catch {
-        router.push('/login')
-      } finally {
-        setLoading(false)
-      }
-    }
-    init()
-  }, [router, fetchGoogleAccounts, fetchJobs])
-
-  async function handleSubmitUrl(e: React.FormEvent) {
-    e.preventDefault()
-    setSubmitMsg(null)
+  const fetchAccounts = useCallback(async () => {
     try {
-      const data = await apiFetch('/api/urls/submit', {
-        method: 'POST',
-        body: JSON.stringify({ url: urlInput }),
-      })
-      setSubmitMsg({ type: 'success', text: data.message || 'URL submitted successfully' })
-      setUrlInput('')
-      fetchJobs(1)
-    } catch (err: unknown) {
-      setSubmitMsg({ type: 'error', text: err instanceof Error ? err.message : 'Submit failed' })
+      const data = await apiFetch('/api/oauth/google/accounts')
+      setAccounts(data.accounts ?? [])
+    } catch {
+      setAccounts([])
+    }
+  }, [])
+
+  // first load
+  useEffect(() => {
+    if (!localStorage.getItem('token')) return
+    fetchJobs(1, 'All')
+    fetchStats()
+    fetchAccounts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // keep in-progress jobs fresh while the tab is open
+  const hasActive = jobs.some((j) => ACTIVE_STATUSES.includes(j.status))
+  useEffect(() => {
+    if (!hasActive) return
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      fetchJobs(pagination.page, filter, true)
+      fetchStats()
+    }, POLL_MS)
+    return () => clearInterval(id)
+  }, [hasActive, fetchJobs, fetchStats, pagination.page, filter])
+
+  async function afterSubmit() {
+    await Promise.all([fetchJobs(1, filter, true), fetchStats(), refreshUser().catch(() => undefined)])
+  }
+
+  function changeFilter(next: string) {
+    setFilter(next)
+    fetchJobs(1, next)
+  }
+
+  async function refreshJob(id: string) {
+    setRefreshing((prev) => ({ ...prev, [id]: true }))
+    try {
+      const data = await apiFetch(`/api/urls/status/${id}/refresh`, { method: 'POST' })
+      toast({ tone: 'info', title: data.message || 'Status refreshed' })
+      fetchJobs(pagination.page, filter, true)
+      fetchStats()
+    } catch (err) {
+      toast({ tone: 'error', title: 'Refresh failed', description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setRefreshing((prev) => ({ ...prev, [id]: false }))
     }
   }
 
-  async function handleConnectGoogle() {
+  async function connectGoogle() {
+    setConnecting(true)
     try {
       const data = await apiFetch('/api/oauth/google/connect-url')
       window.location.href = data.url
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to get connect URL')
+    } catch (err) {
+      setConnecting(false)
+      toast({ tone: 'error', title: "Couldn't start Google sign-in", description: err instanceof Error ? err.message : undefined })
     }
   }
 
-  async function handleSync() {
-    setSyncLoading(true)
-    try {
-      await apiFetch('/api/oauth/google/sync', { method: 'POST' })
-      await fetchGoogleAccounts()
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Sync failed')
-    } finally {
-      setSyncLoading(false)
-    }
-  }
-
-  async function handleDisconnect(googleAccountId: string) {
-    if (!confirm('Disconnect this Google account?')) return
-    try {
-      await apiFetch(`/api/oauth/google/${googleAccountId}`, { method: 'DELETE' })
-      await fetchGoogleAccounts()
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Disconnect failed')
-    }
-  }
-
-  async function handleRefreshJob(jobId: string) {
-    try {
-      const data = await apiFetch(`/api/urls/status/${jobId}/refresh`, { method: 'POST' })
-      setJobActionMsg(prev => ({ ...prev, [jobId]: data.message || 'Refreshed' }))
-      fetchJobs(pagination.page)
-    } catch (err: unknown) {
-      setJobActionMsg(prev => ({ ...prev, [jobId]: err instanceof Error ? err.message : 'Refresh failed' }))
-    }
-  }
-
-  function handleFilterChange(filter: string) {
-    setStatusFilter(filter)
-    fetchJobs(1, filter)
-  }
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
+  const credits = user ? user.availableCredits ?? user.credits : undefined
+  const firstName = user?.firstName
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar userName={user ? `${user.firstName} ${user.lastName}` : undefined} />
+    <AppShell user={user}>
+      <PageHeader
+        title={firstName ? `Welcome back, ${firstName}` : 'Dashboard'}
+        description="Scan your pages, send the ones Google can index, and follow them until Search Console confirms."
+      />
 
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      {userError && !user && (
+        <Alert tone="error" title="We couldn't load your account" className="mb-6">
+          {userError}
+        </Alert>
+      )}
 
-        {/* User Info Card */}
-        {user && (
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h2 className="font-semibold text-lg mb-3">Account Info</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div><span className="text-gray-500">Name:</span> <span className="font-medium">{user.firstName} {user.lastName}</span></div>
-              <div><span className="text-gray-500">Email:</span> <span className="font-medium">{user.email}</span></div>
-              <div><span className="text-gray-500">Credits:</span> <span className="font-medium text-green-600">{user.availableCredits ?? user.credits}</span></div>
-              <div><span className="text-gray-500">Auth:</span> <span className="font-medium capitalize">{user.authProvider}</span></div>
+      {/* stats */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {userLoading && !user ? (
+          Array.from({ length: 4 }, (_, i) => <SkeletonStat key={i} />)
+        ) : (
+          <>
+            <StatCard label="Credits" value={credits ?? '—'} hint="Used only when a URL is indexed" icon={<Zap className="h-4 w-4" />} tone="bg-brand-50 text-brand-600" />
+            <StatCard label="Indexed" value={stats?.indexed ?? '—'} hint="Confirmed by Search Console" icon={<CheckCircle2 className="h-4 w-4" />} tone="bg-emerald-50 text-emerald-600" />
+            <StatCard label="In progress" value={stats?.active ?? '—'} hint="Queued or waiting for Google" icon={<Clock className="h-4 w-4" />} tone="bg-amber-50 text-amber-600" />
+            <StatCard label="Failed" value={stats?.failed ?? '—'} hint="Credit refunded" icon={<CircleAlert className="h-4 w-4" />} tone="bg-red-50 text-red-600" />
+          </>
+        )}
+      </div>
+
+      {/* scanner + google */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <UrlScanner availableCredits={credits ?? 0} onSubmitted={afterSubmit} />
+        </div>
+
+        <div className="space-y-6">
+          <Card>
+            <CardHeader
+              icon={<Plug className="h-[18px] w-[18px]" />}
+              title="Google Search Console"
+              description="Used to check whether pages are indexed."
+            />
+            <CardBody>
+              {accounts === null ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-9 w-32" />
+                </div>
+              ) : accounts.length === 0 ? (
+                <div className="space-y-4">
+                  <Alert tone="warning" title="Not connected">
+                    Connect a Google account so indexing can be verified.
+                  </Alert>
+                  <Button onClick={connectGoogle} loading={connecting} fullWidth leftIcon={<Plug className="h-4 w-4" />}>
+                    Connect Google
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <ul className="space-y-2.5">
+                    {accounts.map((a) => (
+                      <li key={a.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2.5">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-800">{a.googleEmail}</p>
+                          <p className="text-xs text-slate-500">
+                            {a.propertiesCount ?? a.gscProperties?.length ?? 0} propert{(a.propertiesCount ?? a.gscProperties?.length ?? 0) === 1 ? 'y' : 'ies'}
+                          </p>
+                        </div>
+                        {a.isActive && (
+                          <Badge tone="success" dot>
+                            Active
+                          </Badge>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <Link href="/settings/google" className={buttonClass({ variant: 'secondary', fullWidth: true })}>
+                    Manage accounts
+                  </Link>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardBody className="space-y-3 text-sm text-slate-600">
+              <p className="font-semibold text-slate-900">How credits work</p>
+              <ul className="space-y-2 leading-relaxed">
+                <li className="flex gap-2.5">
+                  <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700">1</span>
+                  A credit is reserved when you submit a URL.
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700">2</span>
+                  It is used only once Search Console confirms the page is indexed.
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700">3</span>
+                  If it is not indexed after the retries, the credit is refunded.
+                </li>
+              </ul>
+            </CardBody>
+          </Card>
+        </div>
+      </div>
+
+      {/* jobs */}
+      <Card className="mt-6">
+        <CardHeader
+          title="Indexing jobs"
+          description={jobsLoading && jobs.length === 0 ? 'Loading…' : `${pagination.total} total`}
+          action={
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" onClick={() => { fetchJobs(pagination.page, filter, true); fetchStats() }} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
+                Refresh
+              </Button>
+              <Link href="/urls" className={buttonClass({ variant: 'secondary', size: 'sm' })}>
+                View all URLs
+              </Link>
+            </div>
+          }
+        />
+        <div className="flex gap-1.5 overflow-x-auto border-b border-slate-100 px-5 py-3 sm:px-6" role="tablist" aria-label="Filter jobs">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              role="tab"
+              aria-selected={filter === f.key}
+              onClick={() => changeFilter(f.key)}
+              className={cn(
+                'whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors',
+                filter === f.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {jobsLoading ? (
+          <SkeletonRows rows={5} />
+        ) : jobs.length === 0 ? (
+          <EmptyState
+            icon={<Inbox className="h-6 w-6" />}
+            title={filter === 'All' ? 'No jobs yet' : `No ${FILTERS.find((f) => f.key === filter)?.label.toLowerCase()} jobs`}
+            description={filter === 'All' ? 'Scan and submit URLs above and they will show up here, with their status updating automatically.' : 'Try another filter.'}
+          />
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {jobs.map((job) => {
+              const active = ACTIVE_STATUSES.includes(job.status)
+              return (
+                <li key={job._id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4 transition-colors hover:bg-slate-50/70 sm:px-6">
+                  <div className="min-w-0 flex-1 basis-64">
+                    <Link href={`/jobs/${job._id}`} className="block truncate text-sm font-medium text-slate-900 hover:text-brand-700" title={job.originalUrl}>
+                      {job.originalUrl.replace(/^https?:\/\//, '')}
+                    </Link>
+                    <p className="mt-0.5 text-xs text-slate-500">{job.domain}</p>
+                  </div>
+                  <StatusBadge status={job.status} />
+                  <time dateTime={job.createdAt} title={formatDateTime(job.createdAt)} className="w-20 text-right text-[13px] text-slate-500">
+                    {timeAgo(job.createdAt)}
+                  </time>
+                  <div className="flex items-center gap-2">
+                    {active && (
+                      <Button variant="secondary" size="sm" loading={refreshing[job._id]} onClick={() => refreshJob(job._id)} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
+                        Check
+                      </Button>
+                    )}
+                    <Link href={`/jobs/${job._id}`} className={buttonClass({ variant: 'ghost', size: 'sm' })}>
+                      Details
+                    </Link>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        {pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3.5 text-sm sm:px-6">
+            <span className="text-slate-500">
+              Page {pagination.page} of {pagination.totalPages}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" disabled={pagination.page <= 1} onClick={() => fetchJobs(pagination.page - 1)} leftIcon={<ChevronLeft className="h-4 w-4" />}>
+                Previous
+              </Button>
+              <Button variant="secondary" size="sm" disabled={pagination.page >= pagination.totalPages} onClick={() => fetchJobs(pagination.page + 1)} rightIcon={<ChevronRight className="h-4 w-4" />}>
+                Next
+              </Button>
             </div>
           </div>
         )}
-
-        {/* Google Search Console */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-lg mb-3">Google Search Console</h2>
-          {!googleAccounts.hasGoogleConnected ? (
-            <div className="bg-yellow-50 border border-yellow-200 rounded p-4 flex items-center justify-between">
-              <span className="text-yellow-800 text-sm">⚠️ Google Search Console not connected. Indexing may not work properly.</span>
-              <button onClick={handleConnectGoogle} className="ml-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">
-                Connect Google
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {googleAccounts.accounts.map(acc => (
-                <div key={acc.id} className="border border-gray-200 rounded p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <span className="font-medium text-sm">{acc.googleEmail}</span>
-                      {acc.isActive && <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Active</span>}
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={handleSync} disabled={syncLoading} className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded disabled:opacity-50">
-                        {syncLoading ? 'Syncing...' : 'Sync Properties'}
-                      </button>
-                      <button onClick={() => handleDisconnect(acc.googleAccountId)} className="text-sm bg-red-50 hover:bg-red-100 text-red-700 px-3 py-1.5 rounded">
-                        Disconnect
-                      </button>
-                    </div>
-                  </div>
-                  {acc.gscProperties?.length > 0 && (
-                    <div className="mt-2">
-                      <span className="text-xs text-gray-500">GSC Properties ({acc.propertiesCount}):</span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {acc.gscProperties.map(p => (
-                          <span key={p} className="text-xs bg-gray-100 px-2 py-0.5 rounded">{p}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Submit URL */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="font-semibold text-lg mb-3">Submit URL for Indexing</h2>
-          <form onSubmit={handleSubmitUrl} className="flex gap-3">
-            <input
-              type="url"
-              value={urlInput}
-              onChange={e => setUrlInput(e.target.value)}
-              placeholder="https://example.com/page"
-              required
-              className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded text-sm font-medium">
-              Submit
-            </button>
-          </form>
-          {submitMsg && (
-            <div className={`mt-3 text-sm px-4 py-2 rounded ${submitMsg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-              {submitMsg.text}
-            </div>
-          )}
-        </div>
-
-        {/* Jobs List */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-lg">Indexing Jobs ({pagination.total})</h2>
-            <div className="flex gap-1 flex-wrap">
-              {STATUS_FILTERS.map(f => (
-                <button
-                  key={f}
-                  onClick={() => handleFilterChange(f)}
-                  className={`text-xs px-3 py-1.5 rounded border ${statusFilter === f ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-2 pr-4 font-medium text-gray-600">URL</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-600">Domain</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-600">Status</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-600">Retries</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-600">Source</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-600">Created</th>
-                  <th className="text-left py-2 font-medium text-gray-600">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.length === 0 && (
-                  <tr><td colSpan={7} className="py-8 text-center text-gray-400">No jobs found</td></tr>
-                )}
-                {jobs.map(job => (
-                  <tr key={job._id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-2 pr-4">
-                      <span className="max-w-xs block truncate text-blue-600" title={job.originalUrl}>{job.originalUrl}</span>
-                      {jobActionMsg[job._id] && <span className="text-xs text-gray-500">{jobActionMsg[job._id]}</span>}
-                    </td>
-                    <td className="py-2 pr-4 text-gray-600">{job.domain}</td>
-                    <td className="py-2 pr-4"><StatusBadge status={job.status} /></td>
-                    <td className="py-2 pr-4 text-center">{job.retryCount}</td>
-                    <td className="py-2 pr-4 text-gray-600">{job.credentialSource}</td>
-                    <td className="py-2 pr-4 text-gray-600">{new Date(job.createdAt).toLocaleDateString()}</td>
-                    <td className="py-2">
-                      <div className="flex gap-2">
-                        <Link href={`/jobs/${job._id}`} className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded">View</Link>
-                        {!TERMINAL_STATUSES.includes(job.status) && (
-                          <button onClick={() => handleRefreshJob(job._id)} className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                            Refresh
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {pagination.totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4 text-sm">
-              <span className="text-gray-500">
-                Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)
-              </span>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => fetchJobs(pagination.page - 1)}
-                  disabled={pagination.page <= 1}
-                  className="px-3 py-1.5 border border-gray-300 rounded disabled:opacity-40 hover:bg-gray-50"
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={() => fetchJobs(pagination.page + 1)}
-                  disabled={pagination.page >= pagination.totalPages}
-                  className="px-3 py-1.5 border border-gray-300 rounded disabled:opacity-40 hover:bg-gray-50"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      </Card>
+    </AppShell>
   )
 }

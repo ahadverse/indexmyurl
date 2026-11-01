@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import {
   AlertTriangle,
   ArrowRight,
@@ -65,7 +66,7 @@ interface Row {
   url: string
   scan?: ScanResult
   selected: boolean
-  submit?: { success: boolean; message: string; alreadyIndexed?: boolean }
+  submit?: { success: boolean; message: string; alreadyIndexed?: boolean; code?: string }
 }
 
 type Phase = 'idle' | 'scanning' | 'scanned' | 'submitting' | 'submitted'
@@ -360,7 +361,7 @@ export default function UrlScanner({ availableCredits, onSubmitted }: { availabl
               setRows((prev) =>
                 prev.map((r) =>
                   r.url === event.url
-                    ? { ...r, selected: false, submit: { success: event.success, message: event.message, alreadyIndexed: event.alreadyIndexed } }
+                    ? { ...r, selected: false, submit: { success: event.success, message: event.message, alreadyIndexed: event.alreadyIndexed, code: event.code } }
                     : r
                 )
               )
@@ -666,7 +667,19 @@ export default function UrlScanner({ availableCredits, onSubmitted }: { availabl
                           )}
                         </td>
                         <td className="px-3 py-3 pr-4">
-                          {row.submit && <p className={cn('text-xs', row.submit.success ? 'text-slate-600' : 'text-red-700')}>{row.submit.message}</p>}
+                          {row.submit && (
+                            <p className={cn('text-xs', row.submit.success ? 'text-slate-600' : 'text-red-700')}>
+                              {row.submit.message}
+                              {row.submit.code === 'NO_SEARCH_CONSOLE' && (
+                                <>
+                                  {' '}
+                                  <Link href="/settings/google" className="font-medium underline">
+                                    Set up Search Console access
+                                  </Link>
+                                </>
+                              )}
+                            </p>
+                          )}
                           {!row.submit && scan && (
                             <ul className="space-y-1">
                               {scan.issues.length === 0 && <li className="text-xs text-slate-400">No problems found</li>}

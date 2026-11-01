@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Check, Globe, Plug, Plus, RefreshCw, Unplug } from "lucide-react";
+import { Check, Globe, Plug, Plus, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { initials } from "@/lib/format";
 import type { GoogleAccount } from "@/lib/types";
@@ -17,12 +17,22 @@ import { Button } from "@/components/ui/Button";
 import { buttonClass } from "@/components/ui/buttonStyles";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { useConfirm } from "@/components/ui/Confirm";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 
 type SyncState = "idle" | "syncing" | "done";
+
+/** Answer of GET /api/gsc/access: does the user have Search Console access to a URL's site? */
+interface AccessCheck {
+  hasAccess: boolean;
+  source?: "OAUTH" | "SERVICE_ACCOUNT";
+  siteUrl?: string;
+  message?: string;
+}
 
 function GoogleSettingsContent() {
   const toast = useToast();
@@ -38,11 +48,16 @@ function GoogleSettingsContent() {
   const [syncStates, setSyncStates] = useState<Record<string, SyncState>>({});
   const [disconnecting, setDisconnecting] = useState<Record<string, boolean>>({});
   const [connecting, setConnecting] = useState(false);
+  const [serviceAccountEmail, setServiceAccountEmail] = useState<string | null>(null);
+  const [checkUrl, setCheckUrl] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<AccessCheck | null>(null);
 
   const fetchAccounts = useCallback(async () => {
     try {
       const data = await apiFetch("/api/oauth/google/accounts");
       setPublishMode(data.publishCredentialMode);
+      setServiceAccountEmail(data.serviceAccountEmail ?? null);
       setAccounts(data.accounts || []);
       setLoadError("");
     } catch (err: unknown) {
@@ -87,6 +102,23 @@ function GoogleSettingsContent() {
       toast({ tone: "error", title: "Couldn't disconnect", description: err instanceof Error ? err.message : undefined });
     } finally {
       setDisconnecting((prev) => ({ ...prev, [account.googleAccountId]: false }));
+    }
+  }
+
+  async function handleCheck(e: React.FormEvent) {
+    e.preventDefault();
+    const url = checkUrl.trim();
+    if (!url) return;
+    setChecking(true);
+    setCheckResult(null);
+    try {
+      // refresh=1: re-read Search Console now, since the user has just added us
+      const data = await apiFetch(`/api/gsc/access?url=${encodeURIComponent(url)}&refresh=1`);
+      setCheckResult(data);
+    } catch (err: unknown) {
+      toast({ tone: "error", title: "Couldn't check access", description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -152,7 +184,7 @@ function GoogleSettingsContent() {
             <EmptyState
               icon={<GoogleLogo className="h-6 w-6" />}
               title="No Google account connected"
-              description="Connect an account that owns your sites in Search Console so indexing can be verified."
+              description="Search Console access is required to submit URLs, so we can confirm they get indexed and charge you only when they do. Connect an account that owns your sites, or add IndexMeNow in Search Console below."
               action={
                 <Button onClick={handleConnect} loading={connecting} leftIcon={<Plug className="h-4 w-4" />}>
                   Connect Google account
@@ -225,6 +257,78 @@ function GoogleSettingsContent() {
               })}
             </ul>
           )}
+        </Card>
+
+        <Card>
+          <CardHeader
+            icon={<ShieldCheck className="h-[18px] w-[18px]" />}
+            title="Or add IndexMeNow in Search Console"
+            description="No Google sign-in needed. Add our address as a user of your site."
+          />
+          <div className="space-y-5 px-5 py-5 sm:px-6">
+            {serviceAccountEmail ? (
+              <>
+                <ol className="list-decimal space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700">
+                  <li>
+                    Open{" "}
+                    <a
+                      href="https://search.google.com/search-console"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-brand-600 hover:underline"
+                    >
+                      Search Console
+                    </a>
+                    , choose your site, then <strong>Settings → Users and permissions → Add user</strong>.
+                  </li>
+                  <li>
+                    Paste this email and set the permission to <strong>Full</strong>.
+                  </li>
+                  <li>
+                    Enter a page of that site below and press <strong>Check access</strong>.
+                  </li>
+                </ol>
+
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-800">{serviceAccountEmail}</span>
+                  <CopyButton value={serviceAccountEmail} label="Copy email" />
+                </div>
+
+                <form onSubmit={handleCheck} className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                  <div className="flex-1">
+                    <Input
+                      aria-label="A page of your site"
+                      placeholder="https://your-site.com/any-page"
+                      value={checkUrl}
+                      onChange={(e) => setCheckUrl(e.target.value)}
+                      inputMode="url"
+                    />
+                  </div>
+                  <Button type="submit" loading={checking} disabled={!checkUrl.trim()}>
+                    Check access
+                  </Button>
+                </form>
+
+                {checkResult &&
+                  (checkResult.hasAccess ? (
+                    <Alert tone="success" title="Access confirmed">
+                      {checkResult.source === "SERVICE_ACCOUNT"
+                        ? "IndexMeNow can read this site in Search Console."
+                        : "Your connected Google account covers this site."}{" "}
+                      <span className="font-mono text-xs">{checkResult.siteUrl}</span>
+                    </Alert>
+                  ) : (
+                    <Alert tone="warning" title="No access yet">
+                      {checkResult.message}
+                    </Alert>
+                  ))}
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">
+                This option isn&apos;t available right now. Connect a Google account above instead.
+              </p>
+            )}
+          </div>
         </Card>
 
         <div className="flex justify-end">

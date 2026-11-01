@@ -98,6 +98,17 @@ export default function RegisterPage() {
       <p className="mt-5 text-center text-xs leading-relaxed text-slate-500">
         Indexing is decided by Google and is never guaranteed. A credit is only used once a page is confirmed indexed.
       </p>
+      <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
+        By creating an account you agree to our{' '}
+        <Link href="/terms" className="font-medium text-slate-700 hover:text-slate-900">
+          Terms
+        </Link>{' '}
+        and{' '}
+        <Link href="/privacy" className="font-medium text-slate-700 hover:text-slate-900">
+          Privacy Policy
+        </Link>
+        .
+      </p>
     </AuthShell>
   )
 }

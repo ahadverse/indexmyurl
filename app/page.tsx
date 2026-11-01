@@ -309,6 +309,12 @@ export default function Home() {
             <Link href="/register" className="hover:text-slate-900">
               Register
             </Link>
+            <Link href="/privacy" className="hover:text-slate-900">
+              Privacy
+            </Link>
+            <Link href="/terms" className="hover:text-slate-900">
+              Terms
+            </Link>
           </div>
         </div>
       </footer>

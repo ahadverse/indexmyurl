@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import {
   ArrowRight,
@@ -16,9 +17,22 @@ import {
   XCircle,
 } from 'lucide-react'
 import RedirectIfAuthed from '@/components/RedirectIfAuthed'
+import { JsonLd } from '@/components/JsonLd'
+import { SiteFooter } from '@/components/marketing/SiteFooter'
+import { SiteHeader } from '@/components/marketing/SiteHeader'
 import { Badge } from '@/components/ui/Badge'
 import { buttonClass } from '@/components/ui/buttonStyles'
-import { Logo } from '@/components/ui/Logo'
+import { HOME_FAQ } from '@/lib/faq'
+import { GUIDES } from '@/lib/guides'
+import { pageMetadata, softwareJsonLd } from '@/lib/seo'
+import { SITE_DESCRIPTION } from '@/lib/site'
+
+export const metadata: Metadata = pageMetadata({
+  title: 'IndexMeNow — scan, submit and track URL indexing',
+  description: SITE_DESCRIPTION,
+  path: '/',
+  absoluteTitle: true,
+})
 
 const STEPS = [
   {
@@ -71,25 +85,6 @@ const FEATURES = [
     Icon: Code2,
     title: 'API access',
     body: 'Submit and track URLs from your own tools with an API key, using the same checks as the dashboard.',
-  },
-]
-
-const FAQ = [
-  {
-    q: 'Is indexing guaranteed?',
-    a: 'No. Google alone decides what to index. IndexMeNow removes the avoidable blockers, asks Google to look at your pages and tells you what happened. Pages Google chooses not to index are not charged.',
-  },
-  {
-    q: 'When is a credit used?',
-    a: 'A credit is reserved when you submit a URL and used only when Search Console confirms the page is indexed. If it is still not indexed after the retries, the credit is refunded.',
-  },
-  {
-    q: 'What does the scan check?',
-    a: 'HTTP status, noindex in the page or headers, robots.txt rules for Googlebot, redirects, the canonical URL and thin content. Sitemaps and private addresses are refused.',
-  },
-  {
-    q: 'How does IndexMeNow use my Google account?',
-    a: 'To read your Search Console data (read-only) so it can check indexing status. Google officially supports its Indexing API only for job-posting and livestream pages; IndexMeNow uses it differently, so Google may limit or change this at any time. You can disconnect whenever you like.',
   },
 ]
 
@@ -159,33 +154,16 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-white">
       <RedirectIfAuthed />
+      <JsonLd data={softwareJsonLd(SITE_DESCRIPTION)} />
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-pop"
+      >
+        Skip to content
+      </a>
+      <SiteHeader current="/" />
 
-      {/* header */}
-      <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/85 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <Logo href="/" />
-          <nav className="hidden items-center gap-8 text-sm font-medium text-slate-600 md:flex" aria-label="Sections">
-            <a href="#how" className="hover:text-slate-900">
-              How it works
-            </a>
-            <a href="#features" className="hover:text-slate-900">
-              Features
-            </a>
-            <a href="#faq" className="hover:text-slate-900">
-              FAQ
-            </a>
-          </nav>
-          <div className="flex items-center gap-2">
-            <Link href="/login" className={buttonClass({ variant: 'ghost', size: 'sm' })}>
-              Sign in
-            </Link>
-            <Link href="/register" className={buttonClass({ size: 'sm' })}>
-              Get started
-            </Link>
-          </div>
-        </div>
-      </header>
-
+      <main id="main">
       {/* hero */}
       <section className="relative overflow-hidden">
         <div className="bg-dots-dark absolute inset-0 [mask-image:linear-gradient(to_bottom,black,transparent_85%)]" aria-hidden="true" />
@@ -242,6 +220,11 @@ export default function Home() {
               </li>
             ))}
           </ol>
+          <p className="mt-10 text-center">
+            <Link href="/how-it-works" className="inline-flex items-center gap-1.5 text-[15px] font-medium text-brand-600 hover:text-brand-700">
+              See every step in detail <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </p>
         </div>
       </section>
 
@@ -263,15 +246,51 @@ export default function Home() {
               </div>
             ))}
           </div>
+          <p className="mt-12 text-center">
+            <Link href="/features" className="inline-flex items-center gap-1.5 text-[15px] font-medium text-brand-600 hover:text-brand-700">
+              Explore all features <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </p>
+        </div>
+      </section>
+
+      {/* guides */}
+      <section id="guides" className="scroll-mt-16 border-t border-slate-200 bg-slate-50 py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mx-auto max-w-2xl text-center">
+            <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">Guides</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Learn why pages stay out of Google</h2>
+          </div>
+          <ul className="mt-14 grid gap-6 md:grid-cols-3">
+            {GUIDES.slice(0, 3).map((guide) => (
+              <li key={guide.slug}>
+                <Link
+                  href={`/guides/${guide.slug}`}
+                  className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-card transition-shadow hover:shadow-pop"
+                >
+                  <span className="text-base font-semibold leading-snug text-slate-900">{guide.title}</span>
+                  <span className="mt-2 flex-1 text-[15px] leading-relaxed text-slate-600">{guide.summary}</span>
+                  <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-brand-600">
+                    Read the guide <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-10 text-center">
+            <Link href="/guides" className="inline-flex items-center gap-1.5 text-[15px] font-medium text-brand-600 hover:text-brand-700">
+              All guides <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </p>
         </div>
       </section>
 
       {/* faq */}
-      <section id="faq" className="scroll-mt-16 border-t border-slate-200 bg-slate-50 py-20">
+      <section id="faq" className="scroll-mt-16 border-t border-slate-200 py-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6">
           <h2 className="text-center text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Questions, answered plainly</h2>
           <div className="mt-12 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
-            {FAQ.map(({ q, a }) => (
+            {HOME_FAQ.map(({ q, a }) => (
               <details key={q} className="group px-6 py-5">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-left text-[15px] font-medium text-slate-900 [&::-webkit-details-marker]:hidden">
                   {q}
@@ -281,6 +300,11 @@ export default function Home() {
               </details>
             ))}
           </div>
+          <p className="mt-8 text-center">
+            <Link href="/faq" className="inline-flex items-center gap-1.5 text-[15px] font-medium text-brand-600 hover:text-brand-700">
+              More questions and answers <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </p>
         </div>
       </section>
 
@@ -297,27 +321,9 @@ export default function Home() {
           </div>
         </div>
       </section>
+      </main>
 
-      <footer className="border-t border-slate-200 py-10">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-slate-500 sm:flex-row sm:px-6">
-          <Logo href="/" />
-          <p>Indexing is decided by Google and is never guaranteed.</p>
-          <div className="flex gap-5">
-            <Link href="/login" className="hover:text-slate-900">
-              Sign in
-            </Link>
-            <Link href="/register" className="hover:text-slate-900">
-              Register
-            </Link>
-            <Link href="/privacy" className="hover:text-slate-900">
-              Privacy
-            </Link>
-            <Link href="/terms" className="hover:text-slate-900">
-              Terms
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

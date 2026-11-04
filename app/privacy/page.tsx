@@ -1,16 +1,19 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { LegalContact, LegalLayout, LegalList, LegalSection } from '@/components/LegalLayout'
+import { pageMetadata } from '@/lib/seo'
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: 'Privacy Policy',
   description:
     'What IndexMeNow collects, how it uses your Google data, who it shares it with, and how to delete it.',
-}
+  path: '/privacy',
+})
 
 export default function PrivacyPage() {
   return (
     <LegalLayout
+      path="/privacy"
       title="Privacy Policy"
       updated="1 November 2026"
       intro="IndexMeNow scans web pages for indexing problems, asks Google to look at the ones that pass, and checks in Search Console whether they were indexed. This policy explains what information we handle to do that, and the choices you have."

@@ -23,3 +23,8 @@ export function initials(firstName?: string, lastName?: string, fallback = '?'):
 export function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`
 }
+
+/** "November 4, 2026" from an ISO date. Fixed locale and time zone, so server and browser always agree. */
+export function formatLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { dateStyle: 'long', timeZone: 'UTC' })
+}

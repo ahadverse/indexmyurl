@@ -1,16 +1,19 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { LegalContact, LegalLayout, LegalList, LegalSection } from '@/components/LegalLayout'
+import { pageMetadata } from '@/lib/seo'
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: 'Terms of Service',
   description:
     'The rules for using IndexMeNow: accounts, credits, acceptable use, and what we can and cannot promise about Google indexing.',
-}
+  path: '/terms',
+})
 
 export default function TermsPage() {
   return (
     <LegalLayout
+      path="/terms"
       title="Terms of Service"
       updated="1 November 2026"
       intro="These terms govern your use of IndexMeNow. By creating an account or using the service you agree to them. If you do not agree, please do not use it."
